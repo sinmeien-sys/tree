@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CH6 · 层次树图可视化</title>
+<script src="d3.v7.min.js"></script>
+<style>
+  /* ===== 配色版 / Color Palette（item 6） ===== */
+  :root{
+    --c-ink:    #1d2b3a;   /* 墨蓝 */
+    --c-deep:   #244b5a;   /* 深青 */
+    --c-teal:   #2a9d8f;   /* 青绿 */
+    --c-leaf:   #5fb49c;   /* 叶绿 */
+    --c-gold:   #e9c46a;   /* 暖金 */
+    --c-orange: #f4a261;   /* 橙 */
+    --c-coral:  #e76f51;   /* 珊瑚 */
+    --c-rose:   #d6536d;   /* 玫红 */
+    --c-paper:  #f7f4ec;   /* 纸白 */
+    --c-line:   #cdd7d2;   /* 浅描边 */
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--c-paper); color:var(--c-ink);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+
+  /* ===== 标题区：横向 + 纵向混排（item 5） ===== */
+  header{
+    display:flex; align-items:stretch; gap:0;
+    border-bottom:3px solid var(--c-ink);
+    background:linear-gradient(135deg,var(--c-deep),var(--c-teal));
+    color:var(--c-paper);
+  }
+  /* 纵向排布的章节号 */
+  .vtitle{
+    writing-mode:vertical-rl; text-orientation:upright;
+    letter-spacing:.35em; font-weight:800; font-size:20px;
+    padding:14px 16px; background:rgba(0,0,0,.18);
+    display:flex; align-items:center;
+  }
+  .htitle{ flex:1; padding:18px 26px; display:flex; flex-direction:column; justify-content:center; }
+  .htitle h1{ margin:0; font-size:30px; letter-spacing:.04em; }
+  .htitle h1 small{ font-weight:400; opacity:.85; font-size:16px; }
+  .htitle p{ margin:6px 0 0; opacity:.9; font-size:14px; letter-spacing:.06em; }
+  /* 右侧纵向版权（CopyRight 纵排） */
+  .vcopy{
+    writing-mode:vertical-rl; text-orientation:mixed;
+    font-size:12px; letter-spacing:.18em; padding:14px 12px;
+    background:rgba(0,0,0,.12); display:flex; align-items:center; opacity:.92;
+  }
+
+  /* 装饰花朵区（item 7）—— 与标题横向混排 */
+  .flowers{ display:flex; gap:4px; align-items:center; padding:6px 10px; background:rgba(0,0,0,.1); }
+
+  /* ===== 控制条 ===== */
+  .toolbar{
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+    padding:12px 20px; background:#fff; border-bottom:1px solid var(--c-line);
+    position:sticky; top:0; z-index:5;
+  }
+  .toolbar .grp{ display:flex; gap:6px; align-items:center; }
+  .toolbar label{ font-size:12px; color:var(--c-deep); margin-right:2px; }
+  button{
+    border:1px solid var(--c-teal); background:#fff; color:var(--c-deep);
+    padding:6px 12px; border-radius:18px; cursor:pointer; font-size:13px;
+    transition:.15s;
+  }
+  button:hover{ background:var(--c-leaf); color:#fff; }
+  button.active{ background:var(--c-teal); color:#fff; border-color:var(--c-teal); }
+  select{ padding:5px 8px; border-radius:6px; border:1px solid var(--c-line); }
+
+  /* 配色版色卡 */
+  .palette{ display:flex; gap:0; margin-left:auto; border:1px solid var(--c-line); border-radius:6px; overflow:hidden; }
+  .palette span{ width:22px; height:22px; display:block; }
+
+  /* ===== 画布区 ===== */
+  #stage{ width:100%; height:72vh; min-height:520px; background:#fff; }
+  .caption{ padding:8px 20px 18px; font-size:13px; color:var(--c-deep); }
+  .caption b{ color:var(--c-coral); }
+
+  footer{
+    border-top:1px solid var(--c-line); padding:14px 20px; font-size:12px;
+    color:#6b7d76; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+  .node text{ paint-order:stroke; stroke:#fff; stroke-width:3px; stroke-linejoin:round; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="vtitle">CH·6</div>
+  <div class="htitle">
+    <h1>层次树图可视化 <small>Hierarchical&nbsp;Tree&nbsp;Visualization</small></h1>
+    <p>d3.hierarchy · d3.tree · d3.cluster · linkVertical / linkHorizontal / linkRadial</p>
+  </div>
+  <div class="flowers" id="flowerBox"></div>
+  <div class="vcopy">© 2026 Lexie-秦鸣苑 · CopyRight</div>
+</header>
+
+<div class="toolbar">
+  <div class="grp">
+    <label>坐标</label>
+    <button data-coord="cartesian" class="active">直角坐标</button>
+    <button data-coord="radial">极坐标</button>
+  </div>
+  <div class="grp" id="cartesianOpts">
+    <label>布局</label>
+    <button data-layout="tree" class="active">tree（层级对齐）</button>
+    <button data-layout="cluster">cluster（叶节点对齐）</button>
+    <label style="margin-left:8px">方向</label>
+    <button data-orient="vertical" class="active">纵向</button>
+    <button data-orient="horizontal">横向</button>
+  </div>
+  <div class="grp" id="radialOpts" style="display:none">
+    <label>布局</label>
+    <button data-rlayout="tree" class="active">tree（层级对齐）</button>
+    <button data-rlayout="cluster">cluster（叶节点对齐）</button>
+  </div>
+  <div class="grp">
+    <label>数据</label>
+    <select id="dataSel">
+      <option value="theme.json">主题数据·知识体系</option>
+      <option value="flare.json">flare.json</option>
+      <option value="d3v3tree.json">d3v3tree.json</option>
+    </select>
+  </div>
+  <div class="palette" title="自定义配色版">
+    <span style="background:var(--c-ink)"></span>
+    <span style="background:var(--c-deep)"></span>
+    <span style="background:var(--c-teal)"></span>
+    <span style="background:var(--c-leaf)"></span>
+    <span style="background:var(--c-gold)"></span>
+    <span style="background:var(--c-orange)"></span>
+    <span style="background:var(--c-coral)"></span>
+    <span style="background:var(--c-rose)"></span>
+  </div>
+</div>
+
+<svg id="stage"></svg>
+<div class="caption" id="cap"></div>
+
+<footer>
+  <span>本课小结：<b>d3.hierarchy</b> 解析 JSON · <b>d3.tree</b> 层级对齐 · <b>d3.cluster</b> 叶节点对齐 · link&nbsp;Vertical/Horizontal/Radial 贝塞尔曲线</span>
+  <span>© 2026 Lexie-秦鸣苑 · 1 套数据 → 6 种树图 · 装饰花朵 by d3.pie + d3.arc</span>
+</footer>
+
+<script>
+/* ====== 配色数组（item 6：构建色彩数组） ====== */
+const PALETTE = ["#1d2b3a","#244b5a","#2a9d8f","#5fb49c","#e9c46a","#f4a261","#e76f51","#d6536d"];
+const colorByDepth = d => PALETTE[d.depth % PALETTE.length];
+
+/* ====== 当前状态 ====== */
+const state = {
+  coord: "cartesian",   // cartesian | radial
+  layout: "tree",       // tree | cluster （直角坐标）
+  orient: "vertical",   // vertical | horizontal
+  rlayout: "tree",      // tree | cluster （极坐标）
+  data: "theme.json"
+};
+
+const svg = d3.select("#stage");
+let W=0, H=0;
+function measure(){
+  const r = document.getElementById("stage").getBoundingClientRect();
+  W = r.width; H = r.height;
+}
+
+/* ====== 渲染主函数 ====== */
+function render(){
+  measure();
+  svg.selectAll("*").remove();
+  d3.json(state.data).then(data=>{
+    const root = d3.hierarchy(data);
+    if (state.coord === "cartesian") drawCartesian(root);
+    else drawRadial(root);
+  });
+}
+
+/* ---------- 直角坐标：tree / cluster × 纵向 / 横向 = 4 种 ---------- */
+function drawCartesian(root){
+  const m = {t:40,r:120,b:40,l:120};
+  const vertical = state.orient === "vertical";
+
+  // 选择布局：tree=层级对齐，cluster=叶节点对齐
+  const layout = (state.layout === "cluster" ? d3.cluster() : d3.tree());
+  // size：纵向时 [宽,高]，横向时把宽高交换
+  if (vertical) layout.size([W - m.l - m.r, H - m.t - m.b]);
+  else          layout.size([H - m.t - m.b, W - m.l - m.r]);
+  layout(root);
+
+  // 横向时坐标轴互换 (x<->y)
+  const px = d => vertical ? d.x : d.y;
+  const py = d => vertical ? d.y : d.x;
+
+  const g = svg.append("g").attr("transform",`translate(${m.l},${m.t})`);
+
+  const linkGen = vertical
+      ? d3.linkVertical().x(d=>d.x).y(d=>d.y)
+      : d3.linkHorizontal().x(d=>d.y).y(d=>d.x);
+
+  g.append("g")
+    .attr("fill","none").attr("stroke","#9ab8af").attr("stroke-width",1.4)
+    .selectAll("path").data(root.links()).join("path")
+    .attr("d", linkGen);
+
+  const node = g.append("g").selectAll("g.node")
+    .data(root.descendants()).join("g")
+    .attr("class","node")
+    .attr("transform", d=>`translate(${px(d)},${py(d)})`);
+
+  node.append("circle")
+    .attr("r", d => 6 - d.depth*0.6 < 3 ? 3 : 6 - d.depth*0.6)
+    .attr("fill", colorByDepth)
+    .attr("stroke","#fff").attr("stroke-width",1.5);
+
+  node.append("text")
+    .attr("font-size",12).attr("fill","#27403a")
+    .attr("dy","0.32em")
+    .attr("x", d => d.children ? -9 : 9)
+    .attr("text-anchor", d => d.children ? "end" : "start")
+    .text(d => d.data.name);
+
+  setCap(`直角坐标 · <b>${state.layout==="cluster"?"d3.cluster（叶节点对齐）":"d3.tree（层级对齐）"}</b> · `
+        +`${vertical?"纵向 linkVertical()":"横向 linkHorizontal()"} —— 1 种变 4 种`);
+}
+
+/* ---------- 极坐标：tree / cluster = 2 种 ---------- */
+function drawRadial(root){
+  const radius = Math.min(W,H)/2 - 70;
+  const layout = (state.rlayout === "cluster" ? d3.cluster() : d3.tree())
+                   .size([2*Math.PI, radius])
+                   .separation((a,b)=>(a.parent===b.parent?1:2)/a.depth);
+  layout(root);
+
+  const g = svg.append("g").attr("transform",`translate(${W/2},${H/2})`);
+
+  g.append("g")
+    .attr("fill","none").attr("stroke","#9ab8af").attr("stroke-width",1.3)
+    .selectAll("path").data(root.links()).join("path")
+    .attr("d", d3.linkRadial().angle(d=>d.x).radius(d=>d.y));
+
+  const node = g.append("g").selectAll("g.node")
+    .data(root.descendants()).join("g")
+    .attr("class","node")
+    .attr("transform", d=>`rotate(${d.x*180/Math.PI-90}) translate(${d.y},0)`);
+
+  node.append("circle")
+    .attr("r", d => 5 - d.depth*0.5 < 2.5 ? 2.5 : 5 - d.depth*0.5)
+    .attr("fill", colorByDepth).attr("stroke","#fff").attr("stroke-width",1.3);
+
+  node.append("text")
+    .attr("font-size",11).attr("fill","#27403a").attr("dy","0.31em")
+    .attr("x", d => d.x < Math.PI ? 8 : -8)
+    .attr("text-anchor", d => d.x < Math.PI ? "start" : "end")
+    .attr("transform", d => d.x >= Math.PI ? "rotate(180)" : null)
+    .text(d => d.data.name);
+
+  setCap(`极坐标 · <b>${state.rlayout==="cluster"?"d3.cluster（叶节点对齐）":"d3.tree（层级对齐）"}</b> · `
+        +`linkRadial() 径向贝塞尔曲线 —— 共 2 种`);
+}
+
+function setCap(html){ document.getElementById("cap").innerHTML = html; }
+
+/* ====== 交互绑定 ====== */
+function bindGroup(attr, key){
+  document.querySelectorAll(`button[${attr}]`).forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const v = btn.getAttribute(attr);
+      state[key] = v;
+      // 切换激活态（仅同组）
+      btn.parentElement.querySelectorAll(`button[${attr}]`)
+         .forEach(b=>b.classList.toggle("active", b===btn));
+      // 坐标切换时显隐对应选项组
+      if (attr==="data-coord"){
+        document.getElementById("cartesianOpts").style.display = (v==="cartesian")?"flex":"none";
+        document.getElementById("radialOpts").style.display    = (v==="radial")?"flex":"none";
+      }
+      render();
+    });
+  });
+}
+bindGroup("data-coord","coord");
+bindGroup("data-layout","layout");
+bindGroup("data-orient","orient");
+bindGroup("data-rlayout","rlayout");
+
+document.getElementById("dataSel").addEventListener("change", e=>{
+  state.data = e.target.value; render();
+});
+window.addEventListener("resize", ()=>render());
+
+/* ====== 装饰花朵 🌺：d3.pie + d3.arc（item 7，2 朵） ====== */
+function drawFlower(selector, petals, ringColors, size){
+  const r = size/2;
+  const fsvg = d3.select(selector)
+    .attr("width",size).attr("height",size)
+    .append("g").attr("transform",`translate(${r},${r})`);
+
+  // 用 pie 把圆等分为花瓣
+  const pie = d3.pie().value(()=>1).sort(null);
+  const slices = pie(d3.range(petals));
+
+  // 外层花瓣（用 arc 做成带圆角的瓣）
+  const petalArc = d3.arc()
+      .innerRadius(r*0.30).outerRadius(r*0.95)
+      .padAngle(0.18).cornerRadius(r*0.5);
+
+  fsvg.selectAll("path.petal").data(slices).join("path")
+      .attr("class","petal")
+      .attr("d", petalArc)
+      .attr("fill",(d,i)=>ringColors[i % ringColors.length])
+      .attr("opacity",0.92);
+
+  // 内层小花瓣，错位叠加增加层次
+  const inner = d3.arc().innerRadius(r*0.12).outerRadius(r*0.42)
+      .padAngle(0.15).cornerRadius(r*0.4);
+  fsvg.selectAll("path.inner").data(pie(d3.range(petals))).join("path")
+      .attr("class","inner")
+      .attr("transform",`rotate(${180/petals})`)
+      .attr("d", inner)
+      .attr("fill","#fff").attr("opacity",0.55);
+
+  // 花心
+  fsvg.append("circle").attr("r",r*0.16).attr("fill","#fff8e1")
+      .attr("stroke",ringColors[0]).attr("stroke-width",2);
+}
+
+(function buildFlowers(){
+  const box = d3.select("#flowerBox");
+  box.append("svg").attr("id","flowerA");
+  box.append("svg").attr("id","flowerB");
+  drawFlower("#flowerA", 8,  ["#e76f51","#f4a261","#e9c46a","#d6536d"], 44);
+  drawFlower("#flowerB", 6,  ["#2a9d8f","#5fb49c","#e9c46a","#f4a261"], 44);
+})();
+
+/* 首次渲染 */
+render();
+</script>
+</body>
+</html>
